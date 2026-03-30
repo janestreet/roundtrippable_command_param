@@ -1,0 +1,60 @@
+* ppx_roundtrippable_command_param_sample.exe
+
+: Main command that groups test and with_default commands
+:
+:   ppx_roundtrippable_command_param_sample.exe SUBCOMMAND
+:
+: === subcommands ===
+:
+:   with-default               . with_default
+:   without-default            . test
+:   version                    . print version information
+:   help                       . explain a given subcommand (perhaps recursively)
+
+** version
+
+: print version information
+:
+:   ppx_roundtrippable_command_param_sample.exe version
+:
+: === flags ===
+:
+:   [-build-info]              . print build info for this build
+:   [-version]                 . print the version of this build
+:   [-help], -?                . print this help text and exit
+
+** with-default
+
+: with_default
+:
+:   ppx_roundtrippable_command_param_sample.exe with-default
+:
+: === flags ===
+:
+:   -bar FLOAT                 .
+:   [-baz FOO_BAR]             . (default: Foo) (can be: Bar, Foo)
+:   [-foo BOOL]                . (default: false)
+:   [-help], -?                . print this help text and exit
+
+** without-default
+
+: test
+:
+:   ppx_roundtrippable_command_param_sample.exe without-default
+:
+: === flags ===
+:
+:   -bar FLOAT                 . This is a very very very long doc string that
+:                                explains "a lot of stuff", including why here
+:                                should be a float and what do we want it for blah
+:                                blah blah blah.
+:                                There should be a newline before this paragraph.
+:   -baz FOO_BAR               . (can be: Bar, Foo)
+:   [-bars FLOAT] ...          . This one is repeated! (can be passed multiple
+:                                times)
+:   [-bazes FOO_BAR] ...       . List plus custom arg type (can be passed multiple
+:                                times) (can be: Bar, Foo)
+:   [-foo]                     . Just want to make sure it compiles
+:   [-qux STRING]              . This is optional
+:   [-quxes STRING,...]        . This is a list (comma-separated) (default: "")
+:   [-help], -?                . print this help text and exit

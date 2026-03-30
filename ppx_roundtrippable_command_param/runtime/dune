@@ -1,0 +1,6 @@
+(library
+ (name ppx_roundtrippable_command_param_runtime)
+ (public_name roundtrippable_command_param.ppx_runtime)
+ (libraries core file_path roundtrippable_arg_type)
+ (preprocess
+  (pps ppx_jane)))

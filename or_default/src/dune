@@ -1,0 +1,6 @@
+(library
+ (name or_default)
+ (public_name roundtrippable_command_param.or_default)
+ (libraries core core_kernel.enum roundtrippable_command_param)
+ (preprocess
+  (pps ppx_jane -compare-require-explicit-locality)))

@@ -1,0 +1,6 @@
+(library
+ (name roundtrippable_arg_type)
+ (public_name roundtrippable_command_param.roundtrippable_arg_type)
+ (libraries core)
+ (preprocess
+  (pps ppx_jane -compare-require-explicit-locality)))

@@ -1,0 +1,9 @@
+(library
+ (name ppx_roundtrippable_command_param_test)
+ (libraries async core expect_test_helpers_core patdiff.expect_test_patdiff
+   expectable file_path ppx_jane ppx_or_default
+   ppx_roundtrippable_command_param ppxlib re roundtrippable_arg_type
+   roundtrippable_command_param)
+ (preprocess
+  (pps ppx_jane ppx_roundtrippable_command_param ppxlib.metaquot
+    ppx_or_default)))

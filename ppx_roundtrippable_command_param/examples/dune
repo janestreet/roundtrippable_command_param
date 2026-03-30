@@ -1,0 +1,6 @@
+(executables
+ (modes byte exe)
+ (names ppx_roundtrippable_command_param_sample)
+ (libraries core_unix.command_unix core roundtrippable_command_param)
+ (preprocess
+  (pps ppx_jane ppx_roundtrippable_command_param ppx_or_default)))

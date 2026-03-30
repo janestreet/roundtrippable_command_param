@@ -1,0 +1,5 @@
+(library
+ (name ppx_or_default_test)
+ (libraries core expect_test_helpers_core or_default)
+ (preprocess
+  (pps ppx_or_default ppx_jane)))

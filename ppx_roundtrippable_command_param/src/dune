@@ -1,0 +1,10 @@
+(library
+ (name ppx_roundtrippable_command_param)
+ (public_name roundtrippable_command_param.ppx)
+ (kind ppx_deriver)
+ (libraries base or_default ppxlib)
+ (ppx_runtime_libraries roundtrippable_command_param
+   roundtrippable_command_param.roundtrippable_arg_type
+   roundtrippable_command_param.ppx_runtime)
+ (preprocess
+  (pps ppxlib.metaquot ppx_jane)))

@@ -1,0 +1,57 @@
+# `ppx_roundtrippable_command_param_test`
+
+Putting compile-failing tests here.
+
+```ocaml
+module Default_and_rcp_should_not_type_check = struct
+  type t =
+    { foo : bool
+         [@default false]
+         [@roundtrippable_command_param
+           Roundtrippable_command_param.create_no_arg "foo" ~doc:""]
+    ; bar : float
+    }
+  [@@deriving fields ~iterators:make_creator, or_default, roundtrippable_command_param]
+end
+
+```
+```mdx-error
+Line 3, characters 15-19:
+Error: This expression has type With_defaults.t -> bool Or_default.t
+       but an expression was expected of type With_defaults.t -> bool
+       Type bool Or_default.t is not compatible with type bool
+```
+
+```ocaml
+module Custom_rcp_and_rat_should_trigger_unused_attribute_error = struct
+  type t =
+    { foo : bool
+         [@roundtrippable_command_param
+           Roundtrippable_command_param.create_no_arg "foo" ~doc:""]
+         [@roundtrippable_arg_type
+           create
+             ~arg_type:Command.Param.bool
+             ~to_string:Bool.to_string
+             ~arg_placeholder:"BOOL"]
+    ; bar : float
+    }
+  [@@deriving fields ~iterators:make_creator, or_default, roundtrippable_command_param]
+end
+```
+```mdx-error
+Line 6, characters 14-37:
+Error: Attribute `roundtrippable_arg_type' was not used
+```
+
+
+```ocaml
+module Invalid_list_method = struct
+  type t = { foo : bool list [@list_method invalid] }
+  [@@deriving fields ~iterators:make_creator, or_default, roundtrippable_command_param]
+end
+
+```
+```mdx-error
+Line 2, characters 46-53:
+Error: [@list_method] value must be [listed] or [comma_separated]
+```

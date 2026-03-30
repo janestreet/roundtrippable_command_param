@@ -1,0 +1,47 @@
+#print_line_numbers true
+
+#reset_line_numbers_after_expect true
+
+type not_a_record = int [@@deriving or_default]
+
+[%%expect
+  {|
+Line 1, characters 0-47:
+Error: Unsupported use: you can only use [@deriving or_default] on records
+|}]
+
+type variant_also_doesn't_work =
+  | Hello
+  | World
+[@@deriving or_default]
+
+[%%expect
+  {|
+Line 1, characters 0-76:
+Error: Unsupported use: you can only use [@deriving or_default] on records
+|}]
+
+type hello = { hello : string }
+and world = { world : string } [@@deriving or_default]
+
+[%%expect
+  {|
+Line 1, characters 0-86:
+Error: Unsupported use: you cannot use [@deriving or_default] on multiple recursive type definitions (type a = ... and b = ... )
+|}]
+
+
+module _ = struct
+  type t = string
+
+  module _ = struct
+    type nonrec t = { t : t } [@@deriving or_default]
+  end
+end
+
+[%%expect
+  {|
+Line 5, characters 4-53:
+Error: This expression has type derived_on
+       but an expression was expected of type string
+|}]

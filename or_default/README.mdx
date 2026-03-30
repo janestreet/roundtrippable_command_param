@@ -1,0 +1,151 @@
+# Or_default
+
+`'a Or_default.t` is a type that is isomorphic to `'a option` and named to explicitly
+represent values that have defaults. It is intended to be used with roundtrippable command
+parameters.
+
+<!-- $MDX file=src/or_default.mli,part=type_definition -->
+```ocaml
+(** A type that is isomorphic to ['a Option.t]. It is intended to be used with
+    roundtrippable command parameters. *)
+type 'a t =
+  | Custom of 'a
+  | Default
+[@@deriving compare ~localize, equal ~localize, sexp, sexp_grammar]
+```
+
+# Example
+
+Let's define two types. The first type, `t`, is used in our program. The second type,
+`With_defaults.t`, is used for generating command line parameters. The result of parsing
+command line parameters can be either a value of type `t` or a value of type
+`With_defaults.t`.
+
+In the first example, parsing command line parameters with the roundtrippable command
+parameter generates a value of type `t`.
+
+```ocaml
+open Core
+open Expect_test_helpers_core
+
+type t = { queue_size : int } [@@deriving sexp_of]
+
+module With_defaults = struct
+  type t = { queue_size : int Or_default.t } [@@deriving sexp_of]
+end
+
+let queue_size_param : (int, int Or_default.t) Roundtrippable_command_param.T2.t =
+  Roundtrippable_command_param.create_optional_with_default
+    "queue-size"
+    Command.Arg_type.Export.int
+    ~default:10
+    ~to_string:Int.to_string
+    ~doc:"INT the queue size."
+  |> Roundtrippable_command_param.contra_map ~f:Or_default.to_option
+
+let param : (t, With_defaults.t) Roundtrippable_command_param.T2.t =
+  Roundtrippable_command_param.map queue_size_param ~f:(fun queue_size -> { queue_size })
+  |> Roundtrippable_command_param.contra_map ~f:(fun { With_defaults.queue_size } ->
+    queue_size)
+
+let print_roundtrip t_with_defaults =
+  let args = Roundtrippable_command_param.command_args param t_with_defaults in
+  let t = Command.Param.parse (Roundtrippable_command_param.param param) args in
+  print_s
+    [%message (t_with_defaults : With_defaults.t) (args : string list) (t : t Or_error.t)]
+```
+
+```ocaml
+# print_roundtrip { With_defaults.queue_size = Default }
+((t_with_defaults ((queue_size Default)))
+ (args ())
+ (t (Ok ((queue_size 10)))))
+- : unit = ()
+
+# print_roundtrip { With_defaults.queue_size = Custom 5 }
+((t_with_defaults ((queue_size (Custom 5))))
+ (args (-queue-size 5))
+ (t (Ok ((queue_size 5)))))
+- : unit = ()
+
+# print_roundtrip { With_defaults.queue_size = Custom 10 }
+((t_with_defaults ((queue_size (Custom 10))))
+ (args (-queue-size 10))
+ (t (Ok ((queue_size 10)))))
+- : unit = ()
+```
+
+In the next example, parsing command line parameters with the roundtrippable command
+parameter generates a value of type `With_defaults.t` that can be explicitly "resolved" to
+a value of type `t` later. This requires that the default value is referenced in both the
+roundtrippable command line parameter and the function that resolves the parsed value.
+
+```ocaml
+open Core
+open Expect_test_helpers_core
+
+type t = { queue_size : int } [@@deriving sexp_of]
+
+module With_defaults = struct
+  type outer_t = t
+
+  type t = { queue_size : int Or_default.t }
+  [@@deriving fields ~iterators:make_creator, sexp_of]
+
+  let queue_size_default = 10
+
+  let queue_size_param =
+    Or_default.create_optional_param_with_default_doc
+      "queue-size"
+      Command.Arg_type.Export.int
+      ~default:queue_size_default
+      ~to_string:Int.to_string
+      ~doc:"INT the queue size."
+
+  let param =
+    Roundtrippable_command_param.Record_builder.(
+      Fields.make_creator ~queue_size:(field queue_size_param) |> build_for_record)
+
+  let resolve { queue_size } : outer_t =
+    { queue_size = Or_default.resolve queue_size ~default:queue_size_default }
+end
+
+let print_roundtrip t_with_defaults =
+  let args =
+    Roundtrippable_command_param.command_args With_defaults.param t_with_defaults
+  in
+  let parsed_t_with_defaults =
+    Command.Param.parse (Roundtrippable_command_param.param With_defaults.param) args
+    |> ok_exn
+  in
+  let t = With_defaults.resolve parsed_t_with_defaults in
+  print_s
+    [%message
+      (t_with_defaults : With_defaults.t)
+        (args : string list)
+        (parsed_t_with_defaults : With_defaults.t)
+        (t : t)]
+```
+
+```ocaml
+# print_roundtrip { With_defaults.queue_size = Default }
+((t_with_defaults ((queue_size Default)))
+ (args ())
+ (parsed_t_with_defaults ((queue_size Default)))
+ (t                      ((queue_size 10))))
+- : unit = ()
+
+# print_roundtrip { With_defaults.queue_size = Custom 5 }
+((t_with_defaults ((queue_size (Custom 5))))
+ (args (-queue-size 5))
+ (parsed_t_with_defaults ((queue_size (Custom 5))))
+ (t ((queue_size 5))))
+- : unit = ()
+
+# print_roundtrip { With_defaults.queue_size = Custom 10 }
+((t_with_defaults ((queue_size (Custom 10))))
+ (args (-queue-size 10))
+ (parsed_t_with_defaults ((queue_size (Custom 10))))
+ (t ((queue_size 10))))
+- : unit = ()
+```

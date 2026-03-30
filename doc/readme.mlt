@@ -1,0 +1,131 @@
+open Core
+
+[%%org
+  {|
+#+TITLE: Roundtrippable Command Param
+
+The ~Roundtrippable_command_param~ library aides in constructing and parsing command lines
+between executables that are expected to be at the same version. It creates a one-to-one
+mapping between an ~foo Command.Param.t~ for parsing arguments, and a way to generate the
+command line strings one would pass to construct that ~foo~.
+
+For situations where the executable generating the command lines is expected to diverge in
+version from the executable it is passing the arguments to, the recommendation is to
+encode versions into the command structure.
+
+Common recommended usages of the library are for starting executables in tests inside of
+the tree, and producing the command line arguments to executables in appd configs that are
+invoking that same binary.
+
+Imagine you have a type ~t~: |}]
+
+type t =
+  { fs_poll_interval : Time_ns.Span.t
+  ; file_to_watch : Filename.t
+  ; port : int
+  }
+[@@deriving fields ~iterators:make_creator]
+
+[%%org {| Usually, you would create a ~Command.Param.t~ for each argument: |}];;
+
+#verbose true
+
+module Params = struct
+  let fs_poll_interval =
+    Command.Param.(
+      flag "poll-interval" (required Time_ns.Span.arg_type) ~doc:"SPAN poll interval")
+  ;;
+
+  let file_to_watch =
+    Command.Param.(flag "file" (required Filename_unix.arg_type) ~doc:"FILE to watch")
+  ;;
+
+  let port = Command.Param.(flag "port" (required int) ~doc:"INT port to serve on")
+end
+
+[%%expect
+  {|
+module Params :
+  sig
+    val fs_poll_interval : Time_ns.Span.t Command.Param.t
+    val file_to_watch : string Command.Param.t
+    val port : int Command.Param.t
+  end
+|}]
+
+[%%org {| Instead, create a ~Roundtrippable_command_param.t~ for each field: |}]
+
+let fs_poll_interval_param =
+  Roundtrippable_command_param.create_required
+    "poll-interval"
+    Time_ns.Span.arg_type
+    ~doc:"SPAN poll interval"
+    ~to_string:Time_ns.Span.to_string
+;;
+
+let file_to_watch_param =
+  Roundtrippable_command_param.create_required
+    "file"
+    Filename_unix.arg_type
+    ~doc:"FILE to watch"
+    ~to_string:Fn.id
+;;
+
+let port_param =
+  Roundtrippable_command_param.create_required
+    "port"
+    Command.Param.int
+    ~doc:"INT port to serve on"
+    ~to_string:Int.to_string
+;;
+
+[%%expect
+  {|
+val fs_poll_interval_param : Time_ns.Span.t Roundtrippable_command_param.t =
+  <abstr>
+val file_to_watch_param : string Roundtrippable_command_param.t = <abstr>
+val port_param : int Roundtrippable_command_param.t = <abstr>
+|}]
+
+[%%org
+  {| And then construct a ~t Roundtrippable_command_param.t~ from them. You can use a
+record builder to make this easier: |}]
+
+let param =
+  Roundtrippable_command_param.Record_builder.(
+    Fields.make_creator
+      ~fs_poll_interval:(field fs_poll_interval_param)
+      ~file_to_watch:(field file_to_watch_param)
+      ~port:(field port_param)
+    |> build_for_record)
+;;
+
+[%%expect
+  {|
+val param : t Roundtrippable_command_param.Record_builder.profunctor_term =
+  <abstr>
+|}]
+
+[%%org {| Now you can construct the command args or a param: |}]
+
+let command_param = Roundtrippable_command_param.param param
+
+[%%expect
+  {|
+val command_param : t Command.Param.t = <abstr>
+|}]
+
+let () =
+  { fs_poll_interval = Time_ns.Span.of_sec 1.
+  ; file_to_watch = "important_data.txt"
+  ; port = 1337
+  }
+  |> Roundtrippable_command_param.command_args param
+  |> [%sexp_of: string list]
+  |> print_s
+;;
+
+[%%expect
+  {|
+(-poll-interval 1s -file important_data.txt -port 1337)
+|}]

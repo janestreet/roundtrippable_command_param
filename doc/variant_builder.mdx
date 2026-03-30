@@ -1,0 +1,76 @@
+# Roundtrippable Command Param Variant Builder
+
+`Roundtrippable_command_param.Variant_builder` works with the
+`Variants.make_matcher` function provided by `ppx_variants_conv` to
+create a `Roundtrippable_command_param.t` from a variant type, where
+each constructor in the variant has its own param.
+
+```ocaml
+open Core
+
+type t =
+  | A
+  | B of string
+[@@deriving variants]
+
+let roundtrippable_command_param : t option Roundtrippable_command_param.t =
+  let open Roundtrippable_command_param in
+  Variants.make_matcher
+    ~a:(variant0 (create_no_arg "a" ~doc:"a"))
+    ~b:(variant1 (string_option "b" ~doc:"b"))
+  |> build_variant ~if_nothing_chosen:Return_none
+;;
+```
+
+We also provide the general `variant` function, which handles
+constructors with inline records and constructors with arbitrarily
+many anonymous arguments by going through an intermediate type
+(typically a tuple) which has the arguments but not the constructor:
+
+```ocaml
+type t =
+  | A of { foo : int }
+  | B of int * int * int
+[@@deriving variants]
+
+let roundtrippable_command_param : t option Roundtrippable_command_param.t =
+  let open Roundtrippable_command_param in
+  Variants.make_matcher
+    ~a:
+      (variant
+         (int_option "a" ~doc:"a")
+         ~to_variant:(fun f foo -> f ~foo)
+         ~to_matcher:(fun f ~foo -> f foo))
+    ~b:
+      (variant
+         (create_optional
+             "b"
+             (Command.Arg_type.map Command.Param.sexp ~f:[%of_sexp: int * int * int])
+             ~doc:"b"
+             ~to_string:(Fn.compose Sexp.to_string [%sexp_of: int * int * int]))
+         ~to_variant:(fun f (a, b, c) -> f a b c)
+         ~to_matcher:(fun f a b c -> f (a, b, c)))
+  |> build_variant ~if_nothing_chosen:Return_none
+;;
+```
+
+An alternative way to handle constructors with multiple arguments, if they are anonymous,
+is to use the `variant2`, `variant3` family of functions. Higher arities are easy to add.
+These functions take a separate `_ option Param.t` for each field in
+the constructor, and expect all or none of them to be `Some _`.
+
+```ocaml
+type t = C of int * bool [@@deriving variants]
+
+let roundtrippable_command_param : t option Roundtrippable_command_param.t =
+  let open Roundtrippable_command_param in
+  Variants.make_matcher
+    ~c:(variant2
+          (int_option "c-int" ~doc:"c int")
+          (create_optional
+             "c-bool"
+             Command.Param.bool
+             ~doc:"c bool"
+             ~to_string:Bool.to_string))
+  |> build_variant ~if_nothing_chosen:Return_none
+```

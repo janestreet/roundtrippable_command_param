@@ -1,0 +1,7 @@
+(library
+ (name test_roundtrippable_command_param)
+ (libraries core_unix.command_unix core
+   expect_test_helpers_core.expect_test_helpers_base
+   roundtrippable_command_param sexp.sexp_app)
+ (preprocess
+  (pps ppx_jane)))

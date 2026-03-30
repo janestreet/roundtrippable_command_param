@@ -1,0 +1,6 @@
+(library
+ (name roundtrippable_command_param)
+ (public_name roundtrippable_command_param)
+ (libraries base core.command core_kernel.enum profunctor univ_map)
+ (preprocess
+  (pps ppx_jane -compare-require-explicit-locality)))
