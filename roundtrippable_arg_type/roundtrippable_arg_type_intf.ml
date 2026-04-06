@@ -65,10 +65,10 @@ module type Roundtrippable_arg_type = sig
       of an arg_type. [arg_placeholder] is intended to be used when generating
       documentation for a param. *)
   val%template create
-    :  arg_type:'a Command.Arg_type.t
-    -> to_string:('a -> string)
+    :  arg_type:'a Command.Arg_type.t @ p
+    -> to_string:('a -> string) @ p
     -> arg_placeholder:string
-    -> 'a t
+    -> 'a t @ p
   [@@mode p = (nonportable, portable)]
 
   val of_arg_type_and_to_string

@@ -414,8 +414,8 @@ let%expect_test "some defaulted field" =
 
 module Type_with_modalities = struct
   type with_modalities =
-    { first : string [@globalized]
-    ; second : string [@globalized] [@default "text"]
+    { global_ first : string
+    ; global_ second : string [@default "text"]
     }
   [@@deriving_inline or_default]
 
@@ -428,8 +428,8 @@ module Type_with_modalities = struct
       type nonrec derived_on = with_modalities
 
       type with_modalities =
-        { first : string [@globalized]
-        ; second : string Or_default.t [@globalized]
+        { global_ first : string
+        ; global_ second : string Or_default.t
         }
 
       let resolve_with_modalities =
