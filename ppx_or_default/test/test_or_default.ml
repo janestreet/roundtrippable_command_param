@@ -11,6 +11,7 @@ module type Test_signatures = sig
         type nonrec 'a derived_on = 'a t
         type 'a t
 
+        val create : 'a derived_on -> 'a t
         val resolve : 'a t -> 'a derived_on
       end
     end
@@ -29,6 +30,7 @@ module type Test_signatures = sig
         type nonrec derived_on = t
         type t = { some_int : int }
 
+        val create : derived_on -> t
         val resolve : t -> derived_on
       end
     end
@@ -49,6 +51,7 @@ module Single_field : sig
       type nonrec derived_on = t
       type t = { some_int : int Or_default.t } [@@deriving fields ~getters]
 
+      val create : derived_on -> t
       val resolve : t -> derived_on
     end
   end
@@ -67,6 +70,12 @@ end = struct
     module With_defaults = struct
       type nonrec derived_on = t
       type t = { some_int : int Or_default.t } [@@deriving fields ~getters]
+
+      let create =
+        (fun { some_int } -> { some_int = Or_default.Custom some_int } : derived_on -> t)
+      ;;
+
+      let _ = create
 
       let resolve =
         (fun { some_int } -> { some_int = Or_default.resolve some_int ~default:5 }
@@ -95,16 +104,19 @@ module _ = struct
 
     type single_field = t
 
+    let create_single_field = create
     let resolve_single_field = resolve
   end
 
   type single_field_with_defaults = Single_field.With_defaults.t
 
+  let create_single_field_with_defaults = Single_field.With_defaults.create
   let resolve_single_field_with_defaults = Single_field.With_defaults.resolve
 
   module With_defaults = struct
     type single_field = Single_field.With_defaults.t
 
+    let create_single_field = Single_field.With_defaults.create
     let resolve_single_field = Single_field.With_defaults.resolve
   end
 
@@ -136,6 +148,7 @@ module _ = struct
           }
         [@@deriving fields ~getters]
 
+        val create : derived_on -> t
         val resolve : t -> derived_on
       end
     end
@@ -171,6 +184,27 @@ module _ = struct
           ; single_field_custom_top_level : single_field_with_defaults
           }
         [@@deriving fields ~getters]
+
+        let create =
+          (fun { single_field
+               ; single_field_custom
+               ; single_field_custom_not_t
+               ; single_field_top_level
+               ; single_field_custom_top_level
+               } ->
+             { single_field = Single_field.With_defaults.create single_field
+             ; single_field_custom = Single_field_with_defaults.create single_field_custom
+             ; single_field_custom_not_t =
+                 With_defaults.create_single_field single_field_custom_not_t
+             ; single_field_top_level =
+                 Single_field_with_defaults.create_single_field single_field_top_level
+             ; single_field_custom_top_level =
+                 create_single_field_with_defaults single_field_custom_top_level
+             }
+           : derived_on -> t)
+        ;;
+
+        let _ = create
 
         let resolve =
           (fun { single_field
@@ -271,6 +305,13 @@ module Manifest_types = struct
       type nonrec derived_on = t
       type t = { first_int : int Or_default.t } [@@deriving fields ~getters, sexp]
 
+      let create =
+        (fun { first_int } -> { first_int = Or_default.Custom first_int }
+         : derived_on -> t)
+      ;;
+
+      let _ = create
+
       let resolve =
         (fun { first_int } -> { first_int = Or_default.resolve first_int ~default:5 }
          : t -> derived_on)
@@ -359,6 +400,31 @@ module A_bit_of_everything = struct
         }
       [@@deriving fields ~getters, sexp]
 
+      let create =
+        (fun { first_int
+             ; second_int
+             ; first_string
+             ; first_mutable_string
+             ; second_mutable_int_with_default
+             ; polymorphic_field
+             ; polymorphic_mutable_field
+             ; inner
+             } ->
+           { first_int = Or_default.Custom first_int
+           ; second_int
+           ; first_string = Or_default.Custom first_string
+           ; first_mutable_string
+           ; second_mutable_int_with_default =
+               Or_default.Custom second_mutable_int_with_default
+           ; polymorphic_field
+           ; polymorphic_mutable_field
+           ; inner = Inner.With_defaults.create inner
+           }
+         : 'a derived_on -> 'a t)
+      ;;
+
+      let _ = create
+
       let resolve =
         (fun { first_int
              ; second_int
@@ -428,9 +494,16 @@ module Type_with_modalities = struct
       type nonrec derived_on = with_modalities
 
       type with_modalities =
-        { first : string [@globalized]
-        ; second : string Or_default.t [@globalized]
+        { first : string
+        ; second : string Or_default.t
         }
+
+      let create_with_modalities =
+        (fun { first; second } -> { first; second = Or_default.Custom second }
+         : derived_on -> with_modalities)
+      ;;
+
+      let _ = create_with_modalities
 
       let resolve_with_modalities =
         (fun { first; second } ->
@@ -460,6 +533,8 @@ module Attributes_on_fields = struct
       type nonrec derived_on = t
       type t = { first : string } [@@deriving sexp]
 
+      let create = (fun { first } -> { first } : derived_on -> t)
+      let _ = create
       let resolve = (fun { first } -> { first } : t -> derived_on)
       let _ = resolve
     end
@@ -524,6 +599,12 @@ module With_stable = struct
         }
       [@@deriving bin_io, sexp, equal]
 
+      let create =
+        (fun { num; word } -> { num = Or_default.Custom num; word } : derived_on -> t)
+      ;;
+
+      let _ = create
+
       let resolve =
         (fun { num; word } -> { num = Or_default.resolve num ~default:42; word }
          : t -> derived_on)
@@ -556,4 +637,73 @@ let%expect_test "with bin_io and stable flag" =
   [%expect {| ((num 100) (word hello)) |}];
   test_bin_roundtrip (module With_stable.With_defaults) with_defaults;
   [%expect {| ((num (Custom 100)) (word hello)) |}]
+;;
+
+(* {1 Drop default attributes} *)
+
+module Drop_default_function = struct
+  type t =
+    { num : int [@default 5] [@default.drop_default Int.equal]
+    ; word : string [@default "hi"]
+    }
+  [@@deriving or_default, sexp_of]
+end
+
+let%expect_test "[@default.drop_default <fn>] emits Default when the field equals the \
+                 default"
+  =
+  let create = Drop_default_function.With_defaults.create in
+  (* [num] drops to [Default] only when it equals 5; [word] always wraps as [Custom]
+     because it has no [drop_default*] attribute. *)
+  print_s
+    [%sexp (create { num = 5; word = "hi" } : Drop_default_function.With_defaults.t)];
+  [%expect {| ((num Default) (word (Custom hi))) |}];
+  print_s
+    [%sexp (create { num = 7; word = "hi" } : Drop_default_function.With_defaults.t)];
+  [%expect {| ((num (Custom 7)) (word (Custom hi))) |}]
+;;
+
+module Drop_default_compare = struct
+  type t =
+    { num : int [@default 5] [@default.drop_default.compare]
+    ; word : string [@default "hi"] [@default.drop_default.compare]
+    }
+  [@@deriving or_default, sexp_of]
+end
+
+let%expect_test "[@default.drop_default.compare] uses [%compare.equal: t]" =
+  let create = Drop_default_compare.With_defaults.create in
+  print_s [%sexp (create { num = 5; word = "hi" } : Drop_default_compare.With_defaults.t)];
+  [%expect {| ((num Default) (word Default)) |}];
+  print_s
+    [%sexp (create { num = 5; word = "bye" } : Drop_default_compare.With_defaults.t)];
+  [%expect {| ((num Default) (word (Custom bye))) |}];
+  print_s [%sexp (create { num = 7; word = "hi" } : Drop_default_compare.With_defaults.t)];
+  [%expect {| ((num (Custom 7)) (word Default)) |}]
+;;
+
+module Drop_default_equal = struct
+  type t =
+    { num : int [@default 5] [@default.drop_default.equal]
+    ; word : string [@default "hi"] [@default.drop_default.equal]
+    }
+  [@@deriving or_default, sexp_of]
+end
+
+let%expect_test "[@default.drop_default.equal] uses [%equal: t]" =
+  let create = Drop_default_equal.With_defaults.create in
+  print_s [%sexp (create { num = 5; word = "hi" } : Drop_default_equal.With_defaults.t)];
+  [%expect {| ((num Default) (word Default)) |}];
+  print_s [%sexp (create { num = 7; word = "bye" } : Drop_default_equal.With_defaults.t)];
+  [%expect {| ((num (Custom 7)) (word (Custom bye))) |}]
+;;
+
+let%expect_test "create then resolve is the identity" =
+  let original : Drop_default_compare.t = { num = 5; word = "hi" } in
+  let roundtripped =
+    Drop_default_compare.With_defaults.resolve
+      (Drop_default_compare.With_defaults.create original)
+  in
+  print_s [%sexp (roundtripped : Drop_default_compare.t)];
+  [%expect {| ((num 5) (word hi)) |}]
 ;;

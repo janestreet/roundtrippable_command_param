@@ -10,6 +10,7 @@ open! Base
         type derived_on = t
         type t = { some_int : int Or_default.t }
 
+        val create : derived_on -> t
         val resolve : t -> derived_on
       end
     ]}

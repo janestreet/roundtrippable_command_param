@@ -27,7 +27,7 @@ depends: [
   "dune"             {>= "3.17.0"}
   "ppxlib"           {>= "0.33.0" & < "0.36.0"}
 ]
-available: arch != "arm32" & arch != "x86_32"
+available: arch != "x86_32"
 synopsis: "A library for building Command.Param.t values that can roundtrip to command-line arguments"
 description: "
 Roundtrippable_command_param provides utilities for creating Command.Param.t values that can be converted back to command-line arguments, enabling serialization of command parameters.
