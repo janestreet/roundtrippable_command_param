@@ -34,6 +34,7 @@ signature:
       ; user_name : string
       }
 
+    val create : derived_on -> t
     val resolve : t -> derived_on
   end
 ```
@@ -49,6 +50,14 @@ For the example above, the generated OCaml code is:
         ; user_name : string
         }
 
+      let create =
+        (fun { queue_length; user_name } ->
+           { queue_length = Or_default.Custom queue_length; user_name }
+         : derived_on -> t)
+      ;;
+
+      let _ = create
+
       let resolve =
         (fun { queue_length; user_name } ->
            { queue_length = Or_default.resolve queue_length ~default:5; user_name }
@@ -63,6 +72,11 @@ For the example above, the generated OCaml code is:
 Users can pass `Default` to fields that they don't wish to override, and your code can
 use the `resolve` function to convert back to the original type `t` with all defaults
 substituted.
+
+The `create` function goes in the other direction: it takes a value of the original type
+`t` and lifts it into `With_defaults.t` by wrapping each defaulted field as
+`Or_default.Custom`. By default, `create` doesn't try to detect that a field already
+holds the default value — for that, see `[@default.drop_default*]` below.
 
 Attributes
 ----------
@@ -96,6 +110,20 @@ generates the following module:
         ; e : char Or_default.t
         ; no_default : int
         }
+
+      let create =
+        (fun { a; b; c; d; e; no_default } ->
+           { a = Or_default.Custom a
+           ; b = Or_default.Custom b
+           ; c = Or_default.Custom c
+           ; d = Or_default.Custom d
+           ; e = Or_default.Custom e
+           ; no_default
+           }
+         : derived_on -> t)
+      ;;
+
+      let _ = create
 
       let resolve =
         (fun { a; b; c; d; e; no_default } ->
@@ -155,6 +183,18 @@ generates the following module:
         ; e : char Or_default.t
         }
 
+      let create =
+        (fun { inner; c; d; e } ->
+           { inner = Inner.With_defaults.create inner
+           ; c = Or_default.Custom c
+           ; d = Or_default.Custom d
+           ; e = Or_default.Custom e
+           }
+         : derived_on -> t)
+      ;;
+
+      let _ = create
+
       let resolve =
         (fun { inner; c; d; e } ->
            { inner = Inner.With_defaults.resolve inner
@@ -178,13 +218,40 @@ If you want to use a custom type for the field in the outer record with defaults
 optionally give an argument to the `[@with_defaults]` attribute, like this:
 `[@with_defaults: Custom_type.t]`. In this case, `Custom_type` needs a `resolve` function.
 
+### Detecting default values in `create`
+
+By default, `create` always emits `Or_default.Custom field` for `[@default]`-annotated
+fields, even if the value happens to equal the default. You can opt into "drop default"
+behavior — emitting `Or_default.Default` when the field equals the default — by adding
+one of three attributes (modeled after the corresponding attributes in `ppx_sexp_conv`):
+
+- `[@default.drop_default <equal_fn>]` — uses the user-supplied equality function.
+- `[@default.drop_default.compare]` — uses `[%compare.equal: <field_type>]`.
+- `[@default.drop_default.equal]` — uses `[%equal: <field_type>]`.
+
+For example:
+
+<!-- $MDX file=test/example_for_mdx_intf.ml,part=drop-default-demo -->
+```ocaml
+  type t =
+    { num : int [@default 5] [@default.drop_default.compare]
+    ; word : string [@default "hi"]
+    }
+  [@@deriving or_default]
+```
+With this annotation, `create { num = 5; word = "hi" }` produces
+`{ num = Default; word = Custom "hi" }`: `num` is dropped because it equals its default,
+but `word` has no `drop_default*` attribute and is always wrapped as `Custom`. The
+attribute requires `[@default <value>]` on the same field, and at most one of the three
+forms may be used per field.
+
 Naming
 ------
 
 The generated sub-module will be named `With_defaults` if the deriver is applied to a type
 named `t`. Types with different name have different module names: capitalize the first
-letter of the type and append `_with_defaults`. The `resolve` function will also have the
-type name appended.
+letter of the type and append `_with_defaults`. The `create` and `resolve` functions will
+also have the type name appended.
 
 For instance:
 
@@ -206,6 +273,8 @@ For instance:
         ; b : string
         }
 
+      let create_s = (fun { a; b } -> { a; b } : derived_on -> s)
+      let _ = create_s
       let resolve_s = (fun { a; b } -> { a; b } : s -> derived_on)
 ```
 <!-- $MDX file=test/example_for_mdx_intf.ml,part=naming-type-with-defaults-end -->
@@ -214,8 +283,8 @@ For instance:
 ```
 
 If the `[@with_defaults]` attribute is given a type argument that isn't named `t`, e.g.
-`[@with_defaults: Custom.custom]`, the derived `resolve` function will use function
-`Custom.resolve_custom`.
+`[@with_defaults: Custom.custom]`, the derived `create` and `resolve` functions will call
+`Custom.create_custom` and `Custom.resolve_custom`.
 
 Stable flag
 -----------
@@ -247,6 +316,14 @@ of `Or_default.t`, allowing `bin_io` to be derived on the `With_defaults.t` type
         ; user_name : string
         }
       [@@deriving bin_io, sexp]
+
+      let create =
+        (fun { queue_length; user_name } ->
+           { queue_length = Or_default.Custom queue_length; user_name }
+         : derived_on -> t)
+      ;;
+
+      let _ = create
 
       let resolve =
         (fun { queue_length; user_name } ->

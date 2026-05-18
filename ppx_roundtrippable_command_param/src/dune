@@ -1,7 +1,7 @@
 (library
  (name ppx_roundtrippable_command_param)
  (public_name roundtrippable_command_param.ppx)
- (kind ppx_deriver)
+ (kind ppx_rewriter)
  (libraries base or_default ppxlib)
  (ppx_runtime_libraries roundtrippable_command_param
    roundtrippable_command_param.roundtrippable_arg_type

@@ -60,6 +60,35 @@ module Attrs = struct
       ~payload:(Maybe_in_module.pattern Ast_pattern.(__) |> Ast_pattern.ptyp)
   ;;
 
+  (* These are modeled after [@sexp_drop_default*] in [ppx_sexp_conv]. The leading "@"
+     prevents leaf-name resolution from accepting [@drop_default*] without the [.default.]
+     qualifier, while still allowing both [@or_default.default.drop_default*] and
+     [@default.drop_default*]. *)
+
+  let drop_default =
+    Attribute.declare
+      "or_default.@default.drop_default"
+      Attribute.Context.label_declaration
+      Ast_pattern.(single_expr_payload __)
+      Fn.id
+  ;;
+
+  let drop_default_compare =
+    Attribute.declare
+      "or_default.@default.drop_default.compare"
+      Attribute.Context.label_declaration
+      Ast_pattern.(pstr nil)
+      ()
+  ;;
+
+  let drop_default_equal =
+    Attribute.declare
+      "or_default.@default.drop_default.equal"
+      Attribute.Context.label_declaration
+      Ast_pattern.(pstr nil)
+      ()
+  ;;
+
   let get_default_for_str_exn ld =
     match Attribute.get default ld with
     | None -> None
@@ -82,20 +111,61 @@ module Attrs = struct
   ;;
 end
 
+module Drop_default = struct
+  (** Specifies how to detect that a field's value equals its default, so that [create]
+      can emit [Or_default.Default] instead of [Or_default.Custom]. *)
+  type t =
+    | Function of expression
+    (** [@default.drop_default <equal_fn>]: use the given equality function. *)
+    | Compare (** [@default.drop_default.compare]: use [%compare.equal: <field_type>]. *)
+    | Equal (** [@default.drop_default.equal]: use [%equal: <field_type>]. *)
+end
+
 module Field_annotation = struct
   type 'default t =
     | No_annotations
-    | Default of 'default
+    | Default of
+        { default : 'default
+        ; drop_default : Drop_default.t option
+        }
     | With_defaults of string Maybe_in_module.t option
+
+  let get_drop_default_exn ld =
+    let function_ = Attribute.get Attrs.drop_default ld in
+    let compare = Attribute.get Attrs.drop_default_compare ld in
+    let equal = Attribute.get Attrs.drop_default_equal ld in
+    match function_, compare, equal with
+    | None, None, None -> None
+    | Some expr, None, None -> Some (Drop_default.Function expr)
+    | None, Some (), None -> Some Drop_default.Compare
+    | None, None, Some () -> Some Drop_default.Equal
+    | _, _, _ ->
+      Location.raise_errorf
+        ~loc:ld.pld_loc
+        "Unsupported use: at most one of [@default.drop_default <equal>], \
+         [@default.drop_default.compare], or [@default.drop_default.equal] may be used \
+         on the same field."
+  ;;
 
   let get_exn ld ~get_default_exn =
     let default = get_default_exn ld in
     let with_defaults = Attribute.get Attrs.with_defaults ld in
-    match default, with_defaults with
-    | None, None -> No_annotations
-    | Some default, None -> Default default
-    | None, Some (with_defaults, _attr_loc) -> With_defaults with_defaults
-    | Some _, Some (_, attr_loc) ->
+    let drop_default = get_drop_default_exn ld in
+    match default, with_defaults, drop_default with
+    | None, None, None -> No_annotations
+    | Some default, None, drop_default -> Default { default; drop_default }
+    | None, Some (with_defaults, _attr_loc), None -> With_defaults with_defaults
+    | None, None, Some _ ->
+      Location.raise_errorf
+        ~loc:ld.pld_loc
+        "Unsupported use: [@default.drop_default*] requires [@or_default.default \
+         <value>] on the same field."
+    | None, Some (_, attr_loc), Some _ ->
+      Location.raise_errorf
+        ~loc:attr_loc
+        "Unsupported use: [@default.drop_default*] cannot be combined with \
+         [@or_default.with_defaults]."
+    | Some _, Some (_, attr_loc), _ ->
       Location.raise_errorf
         ~loc:attr_loc
         "Unsupported use: [@or_error.default] and [@or_error.with_defaults] cannot be \
@@ -151,6 +221,12 @@ let resolve_function_name_of type_name =
   | _ -> [%string "resolve_%{type_name}"]
 ;;
 
+let create_function_name_of type_name =
+  match type_name with
+  | "t" -> "create"
+  | _ -> [%string "create_%{type_name}"]
+;;
+
 let with_defaults_type_name_exn ~loc ~with_defaults ~default_type =
   let with_defaults_type_name_maybe_in_module =
     match with_defaults with
@@ -170,6 +246,66 @@ let with_defaults_type_name_exn ~loc ~with_defaults ~default_type =
   in
   Maybe_in_module.to_longident with_defaults_type_name_maybe_in_module
   |> Ast_builder.Default.Located.mk ~loc
+;;
+
+(** A function to add to [With_defaults] which creates a [With_defaults.t] from the
+    original type, checking for default values on fields annotated with an equality
+    function. *)
+let create_function_definition ~loc labels ~type_name ~type_params =
+  let open (val Ast_builder.make loc) in
+  (* We just need the [core_type] which is the first element in the tuple *)
+  let type_params_types = type_params_to_core_types type_params in
+  let pattern =
+    ppat_record
+      (List.map labels ~f:(fun label ->
+         let name = label.pld_name.txt in
+         { txt = Lident name; loc }, pvar name))
+      Closed
+  in
+  let body_expr =
+    pexp_record
+      (List.map labels ~f:(fun label ->
+         let name = label.pld_name.txt in
+         let type_ = label.pld_type in
+         let field = evar name in
+         let expr =
+           match Field_annotation.get_for_str_exn label with
+           | No_annotations -> field
+           | Default { default; drop_default = None } ->
+             (* Without an equality function we can't detect when the field already holds
+                the default, so always wrap as [Custom]. *)
+             let (_ : expression) = default in
+             [%expr Or_default.Custom [%e field]]
+           | Default { default; drop_default = Some drop_default } ->
+             let stripped_type = { type_ with ptyp_attributes = [] } in
+             let equal =
+               match (drop_default : Drop_default.t) with
+               | Function f -> f
+               | Compare -> [%expr [%compare.equal: [%t stripped_type]]]
+               | Equal -> [%expr [%equal: [%t stripped_type]]]
+             in
+             [%expr
+               if [%e equal] [%e field] [%e default]
+               then Or_default.Default
+               else Or_default.Custom [%e field]]
+           | With_defaults with_defaults ->
+             let create =
+               with_defaults_type_name_exn ~loc ~with_defaults ~default_type:type_
+               |> unapplied_type_constr_conv ~f:create_function_name_of
+             in
+             [%expr [%e create] [%e field]]
+         in
+         { txt = Lident name; loc }, expr))
+      None
+  in
+  let create_expr = pexp_fun Nolabel None pattern body_expr in
+  let create_pat = create_function_name_of type_name |> pvar in
+  [%stri
+    let [%p create_pat] =
+      ([%e create_expr]
+       : [%t ptyp_constr { txt = Lident derived_on_type_name; loc } type_params_types]
+         -> [%t ptyp_constr { txt = Lident type_name; loc } type_params_types])
+    ;;]
 ;;
 
 (** A function to add to [With_defaults] which returns the original type which has no
@@ -195,7 +331,7 @@ let resolve_function_definition ~loc labels ~type_name ~type_params =
          let expr =
            match Field_annotation.get_for_str_exn label with
            | No_annotations -> field
-           | Default default ->
+           | Default { default; drop_default = _ } ->
              [%expr Or_default.resolve [%e field] ~default:[%e default]]
            | With_defaults with_defaults ->
              let resolve =
@@ -229,6 +365,20 @@ let resolve_function_declaration ~loc ~type_name ~type_params =
             Nolabel
             (ptyp_constr { txt = Lident type_name; loc } type_params_types)
             (ptyp_constr { txt = Lident derived_on_type_name; loc } type_params_types))
+       ~prim:[])
+;;
+
+let create_function_declaration ~loc ~type_name ~type_params =
+  let open (val Ast_builder.make loc) in
+  let type_params_types = type_params_to_core_types type_params in
+  psig_value
+    (value_description
+       ~name:{ txt = create_function_name_of type_name; loc }
+       ~type_:
+         (ptyp_arrow
+            Nolabel
+            (ptyp_constr { txt = Lident derived_on_type_name; loc } type_params_types)
+            (ptyp_constr { txt = Lident type_name; loc } type_params_types))
        ~prim:[])
 ;;
 
@@ -343,6 +493,7 @@ let or_default =
               ~loc
               ~stable
           in
+          let create_function_definition = create_function_definition ~loc labels in
           let resolve_function_definition = resolve_function_definition ~loc labels in
           let attributes = remove_self_from_deriving_attributes attributes in
           let loc = { loc with loc_ghost = true } in
@@ -358,6 +509,7 @@ let or_default =
                   ~type_name
                   ~type_params
                   ~attributes
+              ; create_function_definition ~type_name ~type_params
               ; resolve_function_definition ~type_name ~type_params
               ]
           in
@@ -414,6 +566,7 @@ let or_default =
           pmty_signature
             [ derived_on_alias
             ; type_declaration
+            ; create_function_declaration ~loc ~type_name ~type_params
             ; resolve_function_declaration ~loc ~type_name ~type_params
             ]
         in

@@ -42,6 +42,41 @@ end
 [%%expect
   {|
 Line 5, characters 4-53:
-Error: This expression has type derived_on
-       but an expression was expected of type string
+Error: This expression has type string but an expression was expected of type
+         derived_on
+|}]
+
+(* [@default.drop_default*] requires a [@default <value>] on the same field. *)
+type missing_default = { num : int [@default.drop_default.equal] } [@@deriving or_default]
+
+[%%expect
+  {|
+Line 1, characters 25-64:
+Error: Unsupported use: [@default.drop_default*] requires [@or_default.default <value>] on the same field.
+|}]
+
+(* At most one drop_default attribute per field. *)
+type two_drop_defaults =
+  { num : int [@default 5] [@default.drop_default.compare] [@default.drop_default.equal] }
+[@@deriving or_default]
+
+[%%expect
+  {|
+Line 2, characters 4-88:
+Error: Unsupported use: at most one of [@default.drop_default <equal>], [@default.drop_default.compare], or [@default.drop_default.equal] may be used on the same field.
+|}]
+
+(* drop_default cannot be combined with [@with_defaults]. *)
+module Inner = struct
+  type t = { x : int [@default 0] } [@@deriving or_default]
+end
+
+type drop_default_with_defaults =
+  { inner : Inner.t [@with_defaults] [@default.drop_default.equal] }
+[@@deriving or_default]
+
+[%%expect
+  {|
+Line 6, characters 20-36:
+Error: Unsupported use: [@default.drop_default*] cannot be combined with [@or_default.with_defaults].
 |}]
