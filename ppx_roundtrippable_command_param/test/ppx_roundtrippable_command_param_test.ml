@@ -860,7 +860,7 @@ let%expect_test "generate command args Record_including_defaults and test roundt
     ~to_sexp_input:[%sexp_of: Record_including_defaults.With_defaults.t]
     ~to_sexp_output:[%sexp_of: Record_including_defaults.t]
     ~equal:[%equal: Record_including_defaults.t]
-    ~rcp:Record_including_defaults.roundtrippable_command_param
+    ~rcp:Record_including_defaults.roundtrippable_command_param_with_defaults
     ~test_cases:
       (List.map test_cases ~f:(fun x ->
          { Test_case.input = x
@@ -877,6 +877,227 @@ let%expect_test "generate command args Record_including_defaults and test roundt
     │ (Custom true)  │  1   │     │ -foo true -bar 1.  │
     └────────────────┴──────┴─────┴────────────────────┘
     |}];
+  return ()
+;;
+
+module Outer_no_defaults_inner_uses_defaults = struct
+  module Inner = struct
+    type t =
+      { bar : string [@default "Mudville"]
+      ; qux : int [@default 0] [@default.drop_default.equal]
+      }
+    [@@deriving
+      equal
+      , fields ~iterators:make_creator
+      , or_default
+      , roundtrippable_command_param
+      , sexp_of]
+  end
+
+  type t =
+    { foo : int
+    ; inner : Inner.t [@roundtrippable_command_param]
+    }
+  [@@deriving
+    equal
+    , fields ~iterators:make_creator
+    , or_default
+    , roundtrippable_command_param
+    , sexp_of]
+end
+
+let%expect_test "Outer.t without defaults works with Inner.t that has defaults" =
+  generate_args_and_test_roundtrip
+    (module Outer_no_defaults_inner_uses_defaults)
+    [ { foo = 13; inner = { bar = "McSorley's"; qux = 4 } }
+    ; { foo = 1; inner = { bar = "Mudville"; qux = 1 } }
+    ; { foo = 1; inner = { bar = "Mudville"; qux = 0 } }
+    ];
+  [%expect
+    {|
+    ┌─────┬────────────┬───────────┬────────────────────────────────┐
+    │ foo │ inner.bar  │ inner.qux │ args                           │
+    ├─────┼────────────┼───────────┼────────────────────────────────┤
+    │ 13  │ McSorley's │ 4         │ -foo 13 -bar McSorley's -qux 4 │
+    │  1  │ Mudville   │ 1         │ -foo 1 -bar Mudville -qux 1    │
+    │  1  │ Mudville   │ 0         │ -foo 1 -bar Mudville           │
+    └─────┴────────────┴───────────┴────────────────────────────────┘
+    |}];
+  return ()
+;;
+
+module Outer_and_inner_use_defaults = struct
+  module Inner = struct
+    type t =
+      { bar : string [@default "Mudville"]
+      ; qux : int
+      }
+    [@@deriving
+      equal
+      , fields ~iterators:make_creator
+      , or_default
+      , roundtrippable_command_param
+      , sexp_of]
+  end
+
+  type t =
+    { foo : int [@default 0] [@default.drop_default.equal]
+    ; inner : Inner.t [@roundtrippable_command_param]
+    }
+  [@@deriving
+    equal
+    , fields ~iterators:make_creator
+    , or_default
+    , roundtrippable_command_param
+    , sexp_of]
+end
+
+let%expect_test "Outer.t with defaults works with Inner.t that has defaults" =
+  (* First show that we can use With_defaults *)
+  let test_cases : Outer_and_inner_use_defaults.With_defaults.t list =
+    [ { foo = Default; inner = { bar = "Barcade"; qux = -1 } }
+    ; { foo = Custom 0; inner = { bar = "Barcade"; qux = -1 } }
+    ; { foo = Custom 100; inner = { bar = "Mudville"; qux = -1 } }
+    ]
+  in
+  generate_args_and_test_roundtrip''
+    ~to_sexp_input:[%sexp_of: Outer_and_inner_use_defaults.With_defaults.t]
+    ~to_sexp_output:[%sexp_of: Outer_and_inner_use_defaults.t]
+    ~equal:[%equal: Outer_and_inner_use_defaults.t]
+    ~rcp:Outer_and_inner_use_defaults.roundtrippable_command_param_with_defaults
+    ~test_cases:
+      (List.map test_cases ~f:(fun x ->
+         { Test_case.input = x
+         ; output = Outer_and_inner_use_defaults.With_defaults.resolve x
+         }))
+    ();
+  [%expect
+    {|
+    ┌──────────────┬───────────┬───────────┬────────────────────────────────┐
+    │ foo          │ inner.bar │ inner.qux │ args                           │
+    ├──────────────┼───────────┼───────────┼────────────────────────────────┤
+    │ Default      │ Barcade   │ -1        │ -bar Barcade -qux -1           │
+    │ (Custom 0)   │ Barcade   │ -1        │ -foo 0 -bar Barcade -qux -1    │
+    │ (Custom 100) │ Mudville  │ -1        │ -foo 100 -bar Mudville -qux -1 │
+    └──────────────┴───────────┴───────────┴────────────────────────────────┘
+    |}];
+  (* Now show that we can use the plain [t RCP.t] *)
+  generate_args_and_test_roundtrip
+    (module Outer_and_inner_use_defaults)
+    [ { foo = 13; inner = { bar = "McSorley's"; qux = 4 } }
+    ; { foo = 1; inner = { bar = "Mudville"; qux = 1 } }
+    ; { foo = 0; inner = { bar = "Mudville"; qux = 1 } }
+    ];
+  [%expect
+    {|
+    ┌─────┬────────────┬───────────┬────────────────────────────────┐
+    │ foo │ inner.bar  │ inner.qux │ args                           │
+    ├─────┼────────────┼───────────┼────────────────────────────────┤
+    │ 13  │ McSorley's │ 4         │ -foo 13 -bar McSorley's -qux 4 │
+    │  1  │ Mudville   │ 1         │ -foo 1 -bar Mudville -qux 1    │
+    │  0  │ Mudville   │ 1         │ -bar Mudville -qux 1           │
+    └─────┴────────────┴───────────┴────────────────────────────────┘
+    |}];
+  return ()
+;;
+
+(* Also exercise the [t Roundtrippable_command_param.t] binding emitted alongside
+   [_with_defaults]. Without [@default.drop_default*] annotations, every field is
+   serialized, including ones whose value matches the declared default. *)
+let%expect_test "generate command args Record_including_defaults via the [t \
+                 Roundtrippable_command_param.t] binding"
+  =
+  generate_args_and_test_roundtrip
+    (module Record_including_defaults)
+    [ { foo = false; bar = -1.7; baz = Some "foo" }
+    ; { foo = false; bar = 1.; baz = None }
+    ; { foo = true; bar = 1.; baz = None }
+    ];
+  [%expect
+    {|
+    ┌───────┬──────┬─────┬───────────────────────────────┐
+    │ foo   │ bar  │ baz │ args                          │
+    ├───────┼──────┼─────┼───────────────────────────────┤
+    │ false │ -1.7 │ foo │ -foo false -bar -1.7 -baz foo │
+    │ false │  1   │     │ -foo false -bar 1.            │
+    │ true  │  1   │     │ -foo true -bar 1.             │
+    └───────┴──────┴─────┴───────────────────────────────┘
+    |}];
+  return ()
+;;
+
+module Default_none : sig
+  type t = { foo : string option [@default] }
+  [@@deriving or_default, roundtrippable_command_param, sexp_of, equal]
+end = struct
+  type t = { foo : string option [@default None] }
+  [@@deriving
+    fields ~iterators:make_creator
+    , or_default
+    , roundtrippable_command_param
+    , sexp_of
+    , equal]
+end
+
+let%expect_test "['a option] field with [@default None] roundtrips" =
+  (* [Custom None] is not a meaningful state for this combination: there is no way to pass
+     a flag "with value [None]" on the command line, so we omit it from the roundtrip
+     test. *)
+  let test_cases : Default_none.With_defaults.t list =
+    [ { foo = Default }; { foo = Custom (Some "hello") } ]
+  in
+  generate_args_and_test_roundtrip''
+    ~to_sexp_input:[%sexp_of: Default_none.With_defaults.t]
+    ~to_sexp_output:[%sexp_of: Default_none.t]
+    ~equal:[%equal: Default_none.t]
+    ~rcp:Default_none.roundtrippable_command_param_with_defaults
+    ~test_cases:
+      (List.map test_cases ~f:(fun x ->
+         { Test_case.input = x; output = Default_none.With_defaults.resolve x }))
+    ();
+  [%expect
+    {|
+    ┌──────────────────┬────────────┐
+    │ foo              │ args       │
+    ├──────────────────┼────────────┤
+    │ Default          │ EMPTY      │
+    │ (Custom (hello)) │ -foo hello │
+    └──────────────────┴────────────┘
+    |}];
+  return ()
+;;
+
+module Time_ns_span_default : sig
+  type t = { span : Time_ns.Span.t [@default] }
+  [@@deriving or_default, roundtrippable_command_param, sexp_of, equal]
+end = struct
+  type t =
+    { span : Time_ns.Span.t [@default Time_ns.Span.minute]
+    (* This default is the point of this test! previously, [Time_ns.Span.minute] got
+       shadowed. *)
+    }
+  [@@deriving
+    fields ~iterators:make_creator
+    , or_default
+    , roundtrippable_command_param
+    , sexp_of
+    , equal]
+end
+
+let%expect_test "runtime modules extend existing modules instead of shadowing them" =
+  (* [[@default Time_ns.Span.minute]] in the above above module should work! *)
+  let parsed =
+    Roundtrippable_command_param.command_args
+      Time_ns_span_default.roundtrippable_command_param_with_defaults
+      { Time_ns_span_default.With_defaults.span = Default }
+    |> Command.Param.parse Time_ns_span_default.param _
+    |> Or_error.ok_exn
+  in
+  Expect_test_helpers_core.require_equal
+    (module Time_ns.Span)
+    parsed.span
+    Time_ns.Span.minute;
+  [%expect {| |}];
   return ()
 ;;
 
@@ -913,7 +1134,8 @@ let%expect_test "compare generated code of field with and without default" =
       include struct
         let _ = fun (_ : t) -> ()
 
-        let roundtrippable_command_param =
+    -|  let roundtrippable_command_param =
+    +|  let roundtrippable_command_param_with_defaults =
           let ppx_roundtrippable_command_param__###_ =
             let open! Ppx_roundtrippable_command_param_runtime in
     -|      Roundtrippable_command_param.create_required
@@ -956,6 +1178,14 @@ let%expect_test "compare generated code of field with and without default" =
     -|              ppx_roundtrippable_command_param__###_))
     +|                 ppx_roundtrippable_command_param__###_
     +|                 ~f:With_defaults.bar)))
+    +|  ;;
+    +|
+    +|  let _ = roundtrippable_command_param_with_defaults
+    +|
+    +|  let roundtrippable_command_param =
+    +|    Roundtrippable_command_param.contra_map
+    +|      roundtrippable_command_param_with_defaults
+    +|      ~f:With_defaults.create
         ;;
 
         let _     = roundtrippable_command_param
@@ -1005,7 +1235,7 @@ let%expect_test "generate command args Record_with_defaults_and_attributes and t
     ~to_sexp_input:Record_with_defaults_and_attributes.With_defaults.sexp_of_t
     ~to_sexp_output:Record_with_defaults_and_attributes.sexp_of_t
     ~equal:Record_with_defaults_and_attributes.equal
-    ~rcp:Record_with_defaults_and_attributes.roundtrippable_command_param
+    ~rcp:Record_with_defaults_and_attributes.roundtrippable_command_param_with_defaults
     ~test_cases:
       (List.map test_cases ~f:(fun x ->
          { Test_case.input = x
@@ -1061,7 +1291,9 @@ let%expect_test "generate command args Record_with_defaults_custom_type_name and
         Record_with_defaults_custom_type_name.Custom_type_with_defaults.custom_type]
     ~to_sexp_output:Record_with_defaults_custom_type_name.sexp_of_custom_type
     ~equal:Record_with_defaults_custom_type_name.equal_custom_type
-    ~rcp:Record_with_defaults_custom_type_name.roundtrippable_command_param_custom_type
+    ~rcp:
+      Record_with_defaults_custom_type_name
+      .roundtrippable_command_param_custom_type_with_defaults
     ~test_cases:
       (List.map test_cases ~f:(fun x ->
          { Test_case.input = x
@@ -1117,8 +1349,8 @@ let%expect_test "compare generated code of t and custom type name with defaults"
     -|  let _ = fun (_ : t) -> ()
     +|  let _ = fun (_ : custom_name) -> ()
 
-    -|  let roundtrippable_command_param =
-    +|  let roundtrippable_command_param_custom_name =
+    -|  let roundtrippable_command_param_with_defaults =
+    +|  let roundtrippable_command_param_custom_name_with_defaults =
           let ppx_roundtrippable_command_param__###_ =
             let open! Ppx_roundtrippable_command_param_runtime in
             Or_default.create_optional_param_with_default_doc'
@@ -1158,6 +1390,18 @@ let%expect_test "compare generated code of t and custom type name with defaults"
                        ppx_roundtrippable_command_param__###_
     -|                 ~f:With_defaults.bar)))
     +|                 ~f:Custom_name_with_defaults.bar)))
+        ;;
+
+    -|  let _ = roundtrippable_command_param_with_defaults
+    +|  let _ = roundtrippable_command_param_custom_name_with_defaults
+
+    -|  let roundtrippable_command_param =
+    +|  let roundtrippable_command_param_custom_name =
+          Roundtrippable_command_param.contra_map
+    -|      roundtrippable_command_param_with_defaults
+    +|      roundtrippable_command_param_custom_name_with_defaults
+    -|      ~f:With_defaults.create
+    +|      ~f:Custom_name_with_defaults.create_custom_name
         ;;
 
     -|  let _     = roundtrippable_command_param
@@ -1285,6 +1529,146 @@ let%expect_test "show generated code of using bool_no_arg attribute" =
                ~bar:
                  (Roundtrippable_command_param.Record_builder.field
                     ppx_roundtrippable_command_param__###_))
+        ;;
+
+        let _     = roundtrippable_command_param
+        let param = Roundtrippable_command_param.param roundtrippable_command_param
+        let _     = param
+      end [@@ocaml.doc "@inline"] [@@merlin.hide]
+    |}];
+  return ()
+;;
+
+module Record_including_defaults_with_equality : sig
+  type t =
+    { foo : bool [@default]
+    ; bar : float (** docstring *)
+    ; baz : string option [@default]
+    }
+  [@@deriving or_default, roundtrippable_command_param, sexp_of, equal]
+end = struct
+  type t =
+    { foo : bool [@default false] [@default.drop_default.compare]
+    ; bar : float (** docstring *)
+    ; baz : string option
+         [@default None] [@default.drop_default [%compare.equal: string option]]
+    }
+  [@@deriving
+    fields ~iterators:make_creator
+    , or_default
+    , roundtrippable_command_param
+    , sexp_of
+    , equal]
+end
+
+let%expect_test "generate command args Record_including_defaults_with_equality via the \
+                 [t Roundtrippable_command_param.t] binding"
+  =
+  generate_args_and_test_roundtrip
+    (module Record_including_defaults_with_equality)
+    [ { foo = false; bar = -1.7; baz = Some "foo" }
+    ; { foo = false; bar = 1.; baz = None }
+    ; { foo = true; bar = 1.; baz = None }
+    ];
+  [%expect
+    {|
+    ┌───────┬──────┬─────┬────────────────────┐
+    │ foo   │ bar  │ baz │ args               │
+    ├───────┼──────┼─────┼────────────────────┤
+    │ false │ -1.7 │ foo │ -bar -1.7 -baz foo │
+    │ false │  1   │     │ -bar 1.            │
+    │ true  │  1   │     │ -foo true -bar 1.  │
+    └───────┴──────┴─────┴────────────────────┘
+    |}];
+  return ()
+;;
+
+let%expect_test "compare generated code of field with and without default" =
+  let loc = Location.none in
+  let str_record =
+    [%str
+      type t =
+        { foo : bool
+        ; bar : float
+        }
+      [@@deriving roundtrippable_command_param]]
+  in
+  let str_record_with_defaults =
+    [%str
+      type t =
+        { foo : bool [@default false] [@default.drop_default.equal]
+        ; bar : float
+        }
+      [@@deriving roundtrippable_command_param]]
+  in
+  let%bind () = print_patdiff str_record str_record_with_defaults in
+  [%expect
+    {|
+    +|[%%ocaml.error "Attribute `default' was not used"                   ]
+    +|[%%ocaml.error "Attribute `default.drop_default.equal' was not used"]
+    +|
+      type t =
+    -|  { foo : bool
+    +|  { foo : bool [@default false] [@default.drop_default.equal]
+        ; bar : float
+        }
+      [@@deriving roundtrippable_command_param]
+
+      include struct
+        let _ = fun (_ : t) -> ()
+
+    -|  let roundtrippable_command_param =
+    +|  let roundtrippable_command_param_with_defaults =
+          let ppx_roundtrippable_command_param__###_ =
+            let open! Ppx_roundtrippable_command_param_runtime in
+    -|      Roundtrippable_command_param.create_required
+    +|      Or_default.create_optional_param_with_default_doc'
+              "foo"
+              (Roundtrippable_arg_type.arg_type roundtrippable_arg_type_bool)
+    +|        ~default:false
+              ~doc:
+                (Roundtrippable_arg_type.arg_placeholder roundtrippable_arg_type_bool ^ " " ^ "")
+              ~to_string:
+                (Staged.unstage
+                   (Roundtrippable_arg_type.to_string roundtrippable_arg_type_bool))
+          and ppx_roundtrippable_command_param__###_ =
+            let open! Ppx_roundtrippable_command_param_runtime in
+            Roundtrippable_command_param.create_required
+              "bar"
+              (Roundtrippable_arg_type.arg_type roundtrippable_arg_type_float)
+              ~doc:
+                (Roundtrippable_arg_type.arg_placeholder roundtrippable_arg_type_float
+                 ^ " "
+                 ^ "")
+              ~to_string:
+                (Staged.unstage
+                   (Roundtrippable_arg_type.to_string roundtrippable_arg_type_float))
+          in
+          Roundtrippable_command_param.Record_builder.Bare.build_for_record
+            (Fields.make_creator
+               ~foo:
+    -|           (Roundtrippable_command_param.Record_builder.field
+    +|           (Roundtrippable_command_param.Record_builder.Bare.field
+    +|              (Roundtrippable_command_param.contra_map
+    -|              ppx_roundtrippable_command_param__###_)
+    +|                 ppx_roundtrippable_command_param__###_
+    +|                 ~f:With_defaults.foo))
+    -|         ~bar:
+    -|           (Roundtrippable_command_param.Record_builder.field
+    +|         ~bar:
+    +|           (Roundtrippable_command_param.Record_builder.Bare.field
+    +|              (Roundtrippable_command_param.contra_map
+    -|              ppx_roundtrippable_command_param__###_))
+    +|                 ppx_roundtrippable_command_param__###_
+    +|                 ~f:With_defaults.bar)))
+    +|  ;;
+    +|
+    +|  let _ = roundtrippable_command_param_with_defaults
+    +|
+    +|  let roundtrippable_command_param =
+    +|    Roundtrippable_command_param.contra_map
+    +|      roundtrippable_command_param_with_defaults
+    +|      ~f:With_defaults.create
         ;;
 
         let _     = roundtrippable_command_param

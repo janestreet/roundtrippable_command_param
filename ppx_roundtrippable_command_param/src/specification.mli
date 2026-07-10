@@ -63,13 +63,25 @@ module Bool_no_arg_param : sig
     }
 end
 
-(** Accepts customized existing [roundtrippable_command_param] or infers where to find it *)
+(** Accepts customized existing [roundtrippable_command_param] or infers where to find it.
+
+    [Default_rcp] carries a [with_defaults] flag that selects between
+    [Foo.roundtrippable_command_param] and
+    [Foo.roundtrippable_command_param_with_defaults] when generating the reference. *)
 module Existing_param : sig
   type t =
-    | Default_rcp of Longident.t loc
+    | Default_rcp of
+        { type_lid : Longident.t loc
+        ; with_defaults : bool
+        }
     | Custom_rcp of expression
 
-  val of_expr : type_lid:longident loc lazy_t -> expression Or_default.t -> t
+  val of_expr
+    :  type_lid:longident loc lazy_t
+    -> with_defaults:bool
+    -> expression Or_default.t
+    -> t
+
   val to_rcp : t -> expression
 end
 

@@ -27,13 +27,24 @@ module Of_arg_type_and_to_string (M : Arg_for_include_functor) = struct
   ;;
 end
 
-let comma_separated { arg_type; to_string; arg_placeholder } =
+let comma_separated ?allow_empty { arg_type; to_string; arg_placeholder } =
   let to_string value =
     String.concat ~sep:"," (List.map ~f:(Staged.unstage to_string) value)
   in
-  { arg_type = Command.Arg_type.comma_separated arg_type
+  { arg_type = Command.Arg_type.comma_separated ?allow_empty arg_type
   ; to_string = Staged.stage to_string
   ; arg_placeholder = String.concat ~sep:"," [ arg_placeholder; "..." ]
+  }
+;;
+
+let option { arg_type; to_string; arg_placeholder } =
+  let to_string = function
+    | None -> ""
+    | Some value -> Staged.unstage to_string value
+  in
+  { arg_type = Command.Arg_type.map arg_type ~f:Option.some
+  ; to_string = Staged.stage to_string
+  ; arg_placeholder
   }
 ;;
 

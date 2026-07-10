@@ -146,7 +146,7 @@ module Parsed_field = struct
       ~continuation:(fun ~attr_loc -> Some (Located.mk ~loc:attr_loc ()))
   ;;
 
-  let of_label_declaration ~with_default label_declaration =
+  let of_label_declaration ~with_defaults label_declaration =
     let get_attribute_lazy attribute =
       (* gets the attribute, but as a ['a Lazy.t option] that marks the attribute as seen
          only when the [Lazy.t] is forced. *)
@@ -167,9 +167,9 @@ module Parsed_field = struct
     ; docstring = extract_docstring label_declaration.pld_attributes
     ; custom_rcp = get_attribute_lazy custom_roundtrippable_command_param_attribute
     ; default =
-        (if with_default then extract_default label_declaration.pld_attributes else None)
+        (if with_defaults then extract_default label_declaration.pld_attributes else None)
     ; with_defaults =
-        with_default
+        with_defaults
         && extract_with_defaults label_declaration.pld_attributes |> Option.is_some
     ; bool_no_arg = get_attribute_lazy bool_no_arg_attribute
     ; list_method = get_attribute_lazy list_method_attribute
@@ -296,13 +296,25 @@ module Parsed_field = struct
     match custom_rcp, with_defaults, bool_no_arg, default with
     | Some rcp, _, _, _ ->
       let rcp = Lazy.force rcp in
+      (* For [@roundtrippable_command_param] (with no payload), this resolves to
+         [Or_default.Default] and the lookup follows the [Naming.rcp_variable_name]
+         convention. The [with_defaults] flag is forwarded so that [@with_defaults]
+         [@roundtrippable_command_param] (the readme calls the latter "automatically
+         inferred") still points at [Foo.roundtrippable_command_param_with_defaults]. For
+         [Or_default.Custom], the user-provided expression is used as-is and the flag is
+         ignored. *)
       Specification.Existing_param.of_expr
         ~type_lid:(Lazy.map ~f:Parsed_type.type_lid parsed_type)
+        ~with_defaults
         rcp
       |> Specification.Existing_param
     | _, true, _, _ ->
+      (* For nested [@with_defaults] fields, point at
+         [Foo.roundtrippable_command_param_with_defaults] rather than
+         [Foo.roundtrippable_command_param]. *)
       Specification.Existing_param.of_expr
         ~type_lid:(Lazy.map ~f:Parsed_type.type_lid parsed_type)
+        ~with_defaults:true
         Default
       |> Specification.Existing_param
     | _, _, Some bool_no_arg, _ ->
@@ -310,6 +322,12 @@ module Parsed_field = struct
       Specification.Bool_no_arg_param { doc; flag_name; loc }
     | _, _, _, Some default ->
       let roundtrippable_arg_type, open_runtime_lib = Lazy.force lazy_arg_type_info in
+      let roundtrippable_arg_type =
+        match Lazy.force parsed_type with
+        | Basic_type _ | List_type _ -> roundtrippable_arg_type
+        | Option_type _ ->
+          [%expr Roundtrippable_arg_type.option [%e roundtrippable_arg_type]]
+      in
       Specification.Default_param
         { doc; flag_name; default; roundtrippable_arg_type; open_runtime_lib; loc }
     | None, false, None, None ->
@@ -336,15 +354,22 @@ let with_defaults_module_name declared_type_name : longident =
   | name -> Longident.parse [%string "%{String.capitalize name}_with_defaults"]
 ;;
 
+(** [ppx_or_default] names the [With_defaults] submodule's constructor [create] for type
+    [t] and [create_<name>] for non-[t] types. *)
+let with_defaults_create_function_name = function
+  | "t" -> "create"
+  | type_name -> [%string "create_%{type_name}"]
+;;
+
 (** We generate a [(t, 'b) Roundtrippable_command_param.T2.t] when
     [@@deriving roundtrippable_command_param] on [t].
 
     [to_input_type] gives us ['b]. Normally, ['b] is [t], but if [t] is a record with a
     [@default] field, we use [With_defaults.t]. (Similarly if [t] is actually named
     something like [my_type].) *)
-let to_input_type ~with_default declared_type_name : longident loc =
+let to_input_type ~with_defaults declared_type_name : longident loc =
   map_located declared_type_name ~f:(fun declared_type_name ->
-    match with_default with
+    match with_defaults with
     | false -> Longident.parse declared_type_name
     | true -> Ldot (with_defaults_module_name declared_type_name, declared_type_name))
 ;;
@@ -362,15 +387,22 @@ let fields_make_creator_function input_type =
   | _ -> failwith "Expected an expression representing a module"
 ;;
 
+let record_has_defaults fields =
+  List.exists fields ~f:(fun field ->
+    Parsed_field.extract_default field.pld_attributes |> Option.is_some
+    || Parsed_field.extract_with_defaults field.pld_attributes |> Option.is_some)
+;;
+
+let record_has_defaults_sig fields =
+  List.exists fields ~f:(fun field ->
+    Parsed_field.extract_default_sig field.pld_attributes |> Option.is_some)
+;;
+
 let rcp_definition_for_record ~loc declared_type_name fields =
-  let with_default =
-    List.exists fields ~f:(fun field ->
-      Parsed_field.extract_default field.pld_attributes |> Option.is_some
-      || Parsed_field.extract_with_defaults field.pld_attributes |> Option.is_some)
-  in
+  let with_defaults = record_has_defaults fields in
   let parsed_fields_with_generated_symbols =
     List.map fields ~f:(fun field ->
-      Parsed_field.of_label_declaration ~with_default field
+      Parsed_field.of_label_declaration ~with_defaults field
       |> With_generated_symbol.mk ~loc:field.pld_loc)
   in
   let call_to_record_builder =
@@ -385,7 +417,7 @@ let rcp_definition_for_record ~loc declared_type_name fields =
           ~f:(fun { inner = { loc; field_name; _ }; generated_symbol } ->
             let generated_symbol_evar = map_with_loc generated_symbol ~f:evar in
             let field =
-              match with_default with
+              match with_defaults with
               | false ->
                 [%expr
                   Roundtrippable_command_param.Record_builder.field
@@ -426,40 +458,128 @@ let rcp_definition_for_record ~loc declared_type_name fields =
         in
         value_binding ~loc ~pat:(ppat_var ~loc generated_symbol) ~expr:rhs)
   in
-  (* This pulls everything together to generate the final roundtrippable command param:
+  (* When [with_defaults = false], we emit a single binding:
 
      {[
        let roundtrippable_command_param =
          let __[generated_symbol]_ = Roundtrippable_command_param.create_required ...
          and ...
          in Roundtrippable_command_param.Record_builder.build_for_record ...
+     ]}
+
+     When [with_defaults = true], we emit the [_with_defaults] binding (with shape
+     [(t, With_defaults.t) Roundtrippable_command_param.T2.t]) and additionally a
+     [t Roundtrippable_command_param.t] binding obtained by [contra_map]'ing through
+     [With_defaults.create]:
+
+     {[
+       let roundtrippable_command_param_with_defaults =
+         let __[generated_symbol]_ = ...
+         and ...
+         in Roundtrippable_command_param.Record_builder.build_for_record ...
+       ;;
+
+       let roundtrippable_command_param =
+         Roundtrippable_command_param.contra_map
+           roundtrippable_command_param_with_defaults
+           ~f:With_defaults.create
+       ;;
      ]} *)
-  [%stri
-    let [%p
-          Located.map Naming.rcp_variable_name_of_type_name declared_type_name
-          |> ppat_var ~loc:declared_type_name.loc]
-      =
-      [%e pexp_let ~loc Nonrecursive per_field_param_bindings call_to_record_builder]
-    ;;]
+  match with_defaults with
+  | false ->
+    let regular_binding =
+      let pat =
+        Located.map
+          (Naming.rcp_variable_name_of_type_name ~with_defaults:false)
+          declared_type_name
+        |> ppat_var ~loc:declared_type_name.loc
+      in
+      [%stri
+        let [%p pat] =
+          [%e pexp_let ~loc Nonrecursive per_field_param_bindings call_to_record_builder]
+        ;;]
+    in
+    [ regular_binding ]
+  | true ->
+    let with_defaults_binding =
+      let pat =
+        Located.map
+          (Naming.rcp_variable_name_of_type_name ~with_defaults:true)
+          declared_type_name
+        |> ppat_var ~loc:declared_type_name.loc
+      in
+      [%stri
+        let [%p pat] =
+          [%e pexp_let ~loc Nonrecursive per_field_param_bindings call_to_record_builder]
+        ;;]
+    in
+    let regular_binding =
+      let pat =
+        Located.map
+          (Naming.rcp_variable_name_of_type_name ~with_defaults:false)
+          declared_type_name
+        |> ppat_var ~loc:declared_type_name.loc
+      in
+      let with_defaults_rcp =
+        Located.map
+          (Naming.rcp_variable_name_of_type_name ~with_defaults:true)
+          declared_type_name
+        |> map_located ~f:lident
+        |> pexp_ident ~loc
+      in
+      let with_defaults_create =
+        Located.map
+          (fun name ->
+            Ldot (with_defaults_module_name name, with_defaults_create_function_name name))
+          declared_type_name
+        |> pexp_ident ~loc
+      in
+      [%stri
+        let [%p pat] =
+          Roundtrippable_command_param.contra_map
+            [%e with_defaults_rcp]
+            ~f:[%e with_defaults_create]
+        ;;]
+    in
+    [ with_defaults_binding; regular_binding ]
 ;;
 
 let rcp_declaration_for_record ~loc declared_type_name t fields =
-  let rcp_name = Located.map Naming.rcp_variable_name_of_type_name declared_type_name in
-  let with_default =
-    List.exists fields ~f:(fun field ->
-      Parsed_field.extract_default_sig field.pld_attributes |> Option.is_some)
+  let with_defaults = record_has_defaults_sig fields in
+  let with_defaults_rcp_name =
+    Located.map (Naming.rcp_variable_name_of_type_name ~with_defaults) declared_type_name
   in
   let output_type =
     ptyp_constr
       ~loc:declared_type_name.loc
-      (to_input_type ~with_default declared_type_name)
+      (to_input_type ~with_defaults declared_type_name)
       []
   in
-  psig_value
-    ~loc
-    (value_description
-       ~loc
-       ~name:rcp_name
-       ~type_:[%type: ([%t t], [%t output_type]) Roundtrippable_command_param.T2.t]
-       ~prim:[])
+  let with_defaults_decl =
+    psig_value
+      ~loc
+      (value_description
+         ~loc
+         ~name:with_defaults_rcp_name
+         ~type_:[%type: ([%t t], [%t output_type]) Roundtrippable_command_param.T2.t]
+         ~prim:[])
+  in
+  match with_defaults with
+  | false -> [ with_defaults_decl ]
+  | true ->
+    let regular_decl =
+      let rcp_name =
+        Located.map
+          (Naming.rcp_variable_name_of_type_name ~with_defaults:false)
+          declared_type_name
+      in
+      psig_value
+        ~loc
+        (value_description
+           ~loc
+           ~name:rcp_name
+           ~type_:[%type: [%t t] Roundtrippable_command_param.t]
+           ~prim:[])
+    in
+    [ with_defaults_decl; regular_decl ]
 ;;
