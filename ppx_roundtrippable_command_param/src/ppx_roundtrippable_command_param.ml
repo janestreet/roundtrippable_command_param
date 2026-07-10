@@ -8,17 +8,22 @@ let unwrap_type_decls_exn = function
       "ppx_roundtrippable_command_param only supports one type at a time"
 ;;
 
-let rcp_str_declaration ~loc tds =
+let rcp_str_declarations ~loc tds =
   let td = unwrap_type_decls_exn tds in
   let declared_type_name = td.ptype_name in
   match td.ptype_kind, td.ptype_manifest with
   | Ptype_abstract, Some ct ->
-    Abstract.rcp_definition_for_abstract ~loc declared_type_name ct
+    [ Abstract.rcp_definition_for_abstract ~loc declared_type_name ct ]
   | Ptype_record fields, _ ->
     Record.rcp_definition_for_record ~loc declared_type_name fields
   | _ -> Location.raise_errorf ~loc "not implemented"
 ;;
 
+(* The auto-generated [param] binding always points at the regular
+   [roundtrippable_command_param] name. For records with defaults, the [contra_map]'d
+   binding emitted by [Record.rcp_definition_for_record] makes that name available with
+   shape [t Roundtrippable_command_param.t]; for everything else, it's the existing
+   no-defaults binding. *)
 let param_str_declaration ~loc tds =
   let open Ast_builder.Default in
   let open Ppxlib_helpers in
@@ -28,18 +33,18 @@ let param_str_declaration ~loc tds =
     map_located ~f:Naming.param_variable_name_of_type_name type_name |> ppat_var ~loc
   in
   let rcp_name =
-    map_located ~f:Naming.rcp_variable_name_of_type_name type_name
+    map_located ~f:(Naming.rcp_variable_name_of_type_name ~with_defaults:false) type_name
     |> map_located ~f:lident
     |> pexp_ident ~loc
   in
   [%stri let [%p name] = Roundtrippable_command_param.param [%e rcp_name]]
 ;;
 
-let rcp_sig_declaration ~loc tds =
+let rcp_sig_declarations ~loc tds =
   let td = unwrap_type_decls_exn tds in
   let t = core_type_of_type_declaration td in
   match td.ptype_kind, td.ptype_manifest with
-  | Ptype_abstract, _ -> Abstract.rcp_declaration_for_abstract ~loc td.ptype_name t
+  | Ptype_abstract, _ -> [ Abstract.rcp_declaration_for_abstract ~loc td.ptype_name t ]
   | Ptype_record fields, _ ->
     Record.rcp_declaration_for_record ~loc td.ptype_name t fields
   | _ -> Location.raise_errorf ~loc "not implemented"
@@ -76,11 +81,11 @@ let () =
       (Deriving.Generator.make Deriving.Args.empty (fun ~loc ~path (_rec, tds) ->
          match within_with_defaults path with
          | true -> []
-         | false -> [ rcp_str_declaration ~loc tds; param_str_declaration ~loc tds ]))
+         | false -> rcp_str_declarations ~loc tds @ [ param_str_declaration ~loc tds ]))
     ~sig_type_decl:
       (Deriving.Generator.make Deriving.Args.empty (fun ~loc ~path (_rec, tds) ->
          match within_with_defaults path with
          | true -> []
-         | false -> [ rcp_sig_declaration ~loc tds; param_sig_declaration ~loc tds ]))
+         | false -> rcp_sig_declarations ~loc tds @ [ param_sig_declaration ~loc tds ]))
   |> Deriving.ignore
 ;;

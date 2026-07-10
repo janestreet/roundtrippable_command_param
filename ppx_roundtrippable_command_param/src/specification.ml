@@ -148,20 +148,23 @@ end
 
 module Existing_param = struct
   type t =
-    | Default_rcp of Longident.t loc
+    | Default_rcp of
+        { type_lid : Longident.t loc
+        ; with_defaults : bool
+        }
     | Custom_rcp of expression
 
-  let of_expr ~type_lid = function
-    | Or_default.Default -> Default_rcp (Lazy.force type_lid)
+  let of_expr ~type_lid ~with_defaults = function
+    | Or_default.Default -> Default_rcp { type_lid = Lazy.force type_lid; with_defaults }
     | Or_default.Custom expr -> Custom_rcp expr
   ;;
 
   let to_rcp = function
-    | Default_rcp type_lid ->
+    | Default_rcp { type_lid; with_defaults } ->
       Ast_builder.Default.unapplied_type_constr_conv
         ~loc:type_lid.loc
         type_lid
-        ~f:Naming.rcp_variable_name_of_type_name
+        ~f:(Naming.rcp_variable_name_of_type_name ~with_defaults)
     | Custom_rcp expr -> expr
   ;;
 end

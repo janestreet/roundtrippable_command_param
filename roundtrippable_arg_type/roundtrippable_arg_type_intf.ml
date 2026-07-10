@@ -80,11 +80,22 @@ module type Roundtrippable_arg_type = sig
     val roundtrippable_arg_type : M.t t
   end
 
-  (** Provide one or more separated by commas.
+  (** Provide values separated by commas.
+
+      [allow_empty] behaves like [Command.Arg_type.comma_separated]'s [allow_empty] arg.
 
       Note that nothing checks that the [to_string] representation doesn't have any
       commas, so this is not guaranteed to round-trip perfectly. *)
-  val comma_separated : 'a t -> 'a list t
+  val comma_separated : ?allow_empty:bool -> 'a t -> 'a list t
+
+  (** Wraps an arg_type so the parsed value is wrapped in [Some]. The [to_string] maps
+      [None] to the empty string and [Some x] to the inner [to_string]. The
+      [arg_placeholder] is preserved.
+
+      This is used by [ppx_roundtrippable_command_param] to support fields of type
+      ['a option] with a [@default ...] attribute, where the surrounding [or_default]
+      machinery requires an arg_type whose value type matches the field type. *)
+  val option : 'a t -> 'a option t
 
   val map : 'a t -> f_output:('a -> 'b) -> f_input:('b -> 'a) -> 'b t
 end

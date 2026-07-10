@@ -184,13 +184,22 @@ type t = { no_arg : bool [@bool_no_arg] (** Should take no argument *) }
 ## Flags with default values
 
 The PPX integrates with `ppx_or_default` to handle default values (you must derive
-`or_default` *first*, and make sure to add `ppx_or_default` to the `jbuild`). In this
-case, the generated parameter has type
-`(t, With_defaults.t) Roundtrippable_command_param.T2.t`:
+`or_default` *first*, and make sure to add `ppx_or_default` to the `jbuild`). When
+default fields are present, the PPX emits two bindings:
+
+- `roundtrippable_command_param_with_defaults` (or
+  `roundtrippable_command_param_<name>_with_defaults` for non-`t` types) of type
+  `(t, With_defaults.t) Roundtrippable_command_param.T2.t`. Pass a `With_defaults.t`
+  through `command_args` and unspecified fields will be omitted from the generated args.
+- `roundtrippable_command_param` of type `t Roundtrippable_command_param.t`, obtained by
+  [`contra_map`]ing the with-defaults binding through the `With_defaults.create` function
+  emitted by `ppx_or_default`. Passing a fully-resolved `t` through `command_args`
+  explicitly sets all switches in the resulting command-line unless those fields match the
+  default *and* `@drop_default` is used.
 
 ```ocaml
 type t =
-  { num1 : int [@default 42] (** If num1 is not provided, the value will default to 42 *)
+  { num1 : int [@default 42] [@default.drop_default.equal] (** If num1 is not provided on the command-line, the value will default to 42. If [num1 = 42] when calling [command_args], then flags are not generated for this field. *)
   ; num2 : float option (** Default should not be used together with option *)
   ; use1 : bool [@default false] (** Provided flag will override default *)
   }
@@ -204,9 +213,16 @@ derive `or_default` and also annotate fields with `[@default]` in the MLI as wel
 # parse_string_exn param "-use1 true"
 - : t = {num1 = 42; num2 = None; use1 = true}
 # let with_defaults = { With_defaults.num1 = Custom 10; num2 = None; use1 = Default} in
-  Roundtrippable_command_param.command_args roundtrippable_command_param  with_defaults
+  Roundtrippable_command_param.command_args
+    roundtrippable_command_param_with_defaults
+    with_defaults
 - : string list = ["-num1"; "10"]
+# Roundtrippable_command_param.command_args
+    roundtrippable_command_param
+    { num1 = 10; num2 = None; use1 = false }
+- : string list = ["-num1"; "10"; "-use1"; "false"]
 ```
+
 
 ## Custom arg type
 
